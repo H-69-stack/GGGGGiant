@@ -129,3 +129,7 @@ backend/data/rfm_sessions/
 # machine anchor (per-machine runtime state, never package it)
 license/machine_anchor.json
 **/machine_anchor.json
+
+# 打包工具（tools/build 是源码，不是 PyInstaller 的 build/ 产物）
+!/tools/build/
+!/tools/build/**
