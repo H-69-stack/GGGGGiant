@@ -73,6 +73,11 @@ DEVICE_COOKIE_MAX_AGE = int(os.environ.get('GTAPP_DEVICE_COOKIE_MAX_AGE', str(36
 # HTTPS 部署时设为 1
 COOKIE_SECURE = os.environ.get('GTAPP_COOKIE_SECURE', '0') == '1'
 
+# 单会话模式：默认关闭。关闭时同一账户可在多个标签页/窗口各自保持登录，
+# 避免「一个标签页重新登录把另一个标签页踢下线」导致页面反复跳登录页。
+# 需要「新登录踢掉旧会话」时设置 GTAPP_SINGLE_SESSION=1。
+SINGLE_SESSION = os.environ.get('GTAPP_SINGLE_SESSION', '0') == '1'
+
 # Process Planning (PP)
 PP_DB_DIR = os.path.join(DATABASE_DIR, 'pp')
 PP_TUBE_DB = os.path.join(PP_DB_DIR, 'tube_analysis.db')

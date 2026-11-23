@@ -23,6 +23,20 @@ function attachRequestAuth(instance) {
   })
 }
 
+// 401 不再把整页跳到 /login（那等于刷新，正在填写的壁厚/图纸长度等会全部丢失）。
+// 改为抛一个全局事件，由常驻的 <SessionExpiredDialog> 原地弹窗重新登录。
+let authExpiredNotified = false
+
+export function resetAuthExpiredFlag() {
+  authExpiredNotified = false
+}
+
+function notifyAuthExpired(message) {
+  if (authExpiredNotified) return
+  authExpiredNotified = true
+  window.dispatchEvent(new CustomEvent('gtapp:auth-expired', { detail: { message } }))
+}
+
 function attachResponseHandler(instance) {
   instance.interceptors.response.use(
     (response) => response,
@@ -33,17 +47,15 @@ function attachResponseHandler(instance) {
 
       if (error.response?.status === 401 && !isLoginRequest && !isOnLoginPage) {
         const hadToken = localStorage.getItem('authToken')
-        if (hadToken) {
-          sessionStorage.setItem(
-            'loginRedirectMessage',
-            '登录已失效：可能已在其他浏览器登录，或会话已过期'
-          )
-        }
         localStorage.removeItem('user')
         localStorage.removeItem('authToken')
         localStorage.removeItem('licenseValid')
         localStorage.removeItem('licenseInfo')
-        window.location.href = '/login'
+        notifyAuthExpired(
+          hadToken
+            ? '登录已失效：可能已在其他浏览器登录，或服务重启导致会话失效'
+            : '当前未登录或会话已失效，请重新登录'
+        )
       }
 
       if (error.response?.status === 403) {

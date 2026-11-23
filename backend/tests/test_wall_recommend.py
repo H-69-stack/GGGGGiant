@@ -92,3 +92,49 @@ def test_transition_is_a_straight_line():
     assert max(steps) <= 0.02
     assert min(steps) >= -0.02
     assert transition[0] > transition[-1]
+
+
+def _gentle_taper_rows(length=568.0):
+    """1.24 → 0.94 over 137 mm, i.e. ~0.0022 mm/mm — below the old 0.005 threshold."""
+    rows = []
+    position = 0.0
+    while position <= length + 1e-9:
+        if position <= 125.0:
+            thickness = 1.241
+        elif position < 262.0:
+            thickness = 1.241 + (0.94 - 1.241) * (position - 125.0) / 137.0
+        else:
+            thickness = 0.94
+        rows.append({"cumulative_length": round(position, 3), "wall_thickness": round(thickness, 4)})
+        position += 1.0
+    return rows
+
+
+def test_gentle_taper_is_a_transition_not_a_vertical_step():
+    prepared = analyze_uploaded_wall(_gentle_taper_rows())
+    fields = prepared["fields"]
+
+    assert fields["T1"] == 1.2
+    assert fields["T2"] == 0.9
+    assert fields["TL1"] > 0
+    assert fields["TLM1"] > 100, "缓坡必须保留真实跨度，不能被切成两个平台"
+    assert fields["TLM1"] < 200
+    assert fields["TL1"] + fields["TLM1"] + fields["TL2"] == 568
+
+    curve = prepared["curve"]
+    tallest = 0.0
+    for left, right in zip(curve, curve[1:]):
+        if right["cumulative_length"] > left["cumulative_length"]:
+            tallest = max(tallest, abs(right["wall_thickness"] - left["wall_thickness"]))
+    assert tallest < 0.05, "重建曲线上不应再出现竖直台阶"
+
+
+def test_taper_keeps_plateau_medians_after_rounding():
+    rows = _gentle_taper_rows()
+    prepared = analyze_uploaded_wall(rows)
+    fields = prepared["fields"]
+    # 高平台 1.241 → 1.2；低平台 0.94 → 0.9；1 位小数取整不是测量误差
+    assert fields["T1"] == 1.2
+    assert fields["T2"] == 0.9
+    assert prepared["curve"][0]["wall_thickness"] == 1.2
+    assert prepared["curve"][-1]["wall_thickness"] == 0.9

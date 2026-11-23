@@ -400,3 +400,94 @@ def decimate_rows(rows, *, grid_step: float = GRID_STEP_MM):
     if out and out[-1] is not rows[-1]:
         out.append(rows[-1])
     return out, {"archive_step_mm": float(stride), "archive_rows": len(out)}
+#: 「粗测判定」：先在 1 mm 站位里均匀挑 N 个精测，相邻站读数差在阈值内就判为等截面段，
+#: 段内 1 mm 站位不再切刀，直接按两端读数填充。N=0/off 关闭（回到逐站精测）。
+#: 默认 0 = 关闭：该捷径会复用/拟合截面轮廓，模具下游按实测截面算时可能被放大误差，需显式开启。
+DEFAULT_STRAIGHT_PROBES = 0
+MAX_STRAIGHT_PROBES = 200
+#: 填充方式：const = 两端读数取平均后整段恒定（默认）；linear = 按弧长在两端之间线性插值。
+DEFAULT_STRAIGHT_FILL = "const"
+#: 双判据：中心线曲率半径下限（mm）；弯段截面读数几乎不变，只看读数会被骗。
+DEFAULT_STRAIGHT_CURVATURE_RADIUS_MM = 2000.0
+DEFAULT_STRAIGHT_PERIMETER_TOL_MM = 0.02
+DEFAULT_STRAIGHT_WALL_TOL_MM = 0.005
+DEFAULT_STRAIGHT_RADIAL_TOL_MM = 0.01
+#: 端部强制 1 mm 实测的长度（端部拟合窗口要 ≥6 个实测站）。
+DEFAULT_STRAIGHT_END_MM = 15.0
+
+
+def _env_flag(raw):
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+def straight_probe_count(default=DEFAULT_STRAIGHT_PROBES):
+    """粗测判定的精测站位个数：``GTAPP_STRAIGHT_PROBES``；0/off 关闭，夹在 [0, 200]。"""
+    raw = os.environ.get("GTAPP_STRAIGHT_PROBES")
+    if raw is None or not str(raw).strip():
+        return int(default)
+    text = str(raw).strip().lower()
+    if text in ("off", "false", "no", "none"):
+        return 0
+    try:
+        value = int(float(text))
+    except (TypeError, ValueError):
+        return int(default)
+    return max(0, min(MAX_STRAIGHT_PROBES, value))
+
+
+def straight_fill_mode(default=DEFAULT_STRAIGHT_FILL):
+    """等截面段填充方式：``GTAPP_STRAIGHT_FILL`` = const|linear|off。"""
+    raw = os.environ.get("GTAPP_STRAIGHT_FILL")
+    if raw is None or not str(raw).strip():
+        return str(default)
+    text = str(raw).strip().lower()
+    if text in ("off", "none", "0", "no", "false"):
+        return "off"
+    if text in ("linear", "lerp", "interp", "interpolate"):
+        return "linear"
+    return "const"
+
+
+def straight_curvature_radius_mm(default=DEFAULT_STRAIGHT_CURVATURE_RADIUS_MM):
+    """等截面段允许的最小中心线曲率半径（mm）：``GTAPP_STRAIGHT_CURV_RADIUS_MM``。"""
+    raw = os.environ.get("GTAPP_STRAIGHT_CURV_RADIUS_MM")
+    if raw is None or not str(raw).strip():
+        return float(default)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return float(default)
+    if not np.isfinite(value) or value <= 0:
+        return float(default)
+    return max(50.0, min(1.0e6, value))
+
+
+def straight_end_fine_mm(default=DEFAULT_STRAIGHT_END_MM):
+    """粗测模式下两端强制逐站实测的长度（mm）：``GTAPP_STRAIGHT_END_MM``。"""
+    raw = os.environ.get("GTAPP_STRAIGHT_END_MM")
+    if raw is None or not str(raw).strip():
+        return float(default)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return float(default)
+    if not np.isfinite(value) or value < 0:
+        return float(default)
+    return min(50.0, value)
+
+
+def straight_tolerances():
+    """等截面段判定阈值（mm）：周长差、壁厚差、轮廓径向差。"""
+    def _read(env, default):
+        raw = os.environ.get(env)
+        if raw is None or not str(raw).strip():
+            return float(default)
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return float(default)
+        return value if np.isfinite(value) and value >= 0 else float(default)
+
+    return {"perimeter_mm": _read("GTAPP_STRAIGHT_PERIM_MM", DEFAULT_STRAIGHT_PERIMETER_TOL_MM),
+            "wall_mm": _read("GTAPP_STRAIGHT_WALL_MM", DEFAULT_STRAIGHT_WALL_TOL_MM),
+            "radial_mm": _read("GTAPP_STRAIGHT_RADIAL_MM", DEFAULT_STRAIGHT_RADIAL_TOL_MM)}

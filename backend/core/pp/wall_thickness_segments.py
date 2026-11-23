@@ -28,6 +28,21 @@ import numpy as np
 _FLAT_LABEL = "flat"
 _TRANS_LABEL = "transition"
 
+# 斜率判据（mm 壁厚 / mm 长度）。原来的下限是固定 0.005，1.4 → 0.94 这种
+# 长达 130 mm 的缓坡（约 0.0018）会被整段判成平台，再被平台离群拆分切成
+# 两段平台、过渡长度为 0，页面上就是一道竖直台阶。这里改成自适应下限，
+# 并额外给一条「单调变化」兜底规则。
+_MIN_SLOPE_THRESHOLD = 0.0015
+_MIN_MONOTONIC_SLOPE = 0.0008
+_MIN_MONOTONIC_SPAN_MM = 15.0
+_MIN_MONOTONIC_DELTA_MM = 0.1
+
+# 平台离群拆分：壁厚标准差超过这个值的「离群段」其实是渐变斜坡，不能当平台
+_PLATEAU_MAX_STD_MM = 0.02
+
+# 平台离群拆分出的过渡段最短跨度，避免又变成零长度竖直台阶
+_TRANSITION_MIN_MM = 3.0
+
 
 def _smooth(values: np.ndarray, window: int = 11, poly: int = 2) -> np.ndarray:
     if len(values) < 5:
@@ -52,8 +67,25 @@ def _label_flat_or_transition(
     slope_threshold: float,
     min_flat_mm: float,
     min_trans_mm: float,
+    *,
+    monotonic_min_slope: float = _MIN_MONOTONIC_SLOPE,
+    monotonic_min_mm: float = _MIN_MONOTONIC_SPAN_MM,
+    monotonic_min_delta_mm: float = _MIN_MONOTONIC_DELTA_MM,
 ) -> np.ndarray:
-    """Classify each sample into flat / transition based on local slope."""
+    """Classify each sample into flat / transition based on local slope.
+
+    Two criteria are combined:
+
+    1. local slope ``|dT/ds| > slope_threshold`` ⇒ transition;
+    2. a long monotonic stretch that changes the wall by more than
+       ``monotonic_min_delta_mm`` over at least ``monotonic_min_mm`` ⇒
+       transition, even when its slope is gentler than the threshold.
+
+    Rule 2 exists because a slow taper (0.0015–0.002 mm/mm, e.g. 1.4 → 0.94
+    over 130 mm) looks flat sample by sample but is a real transition. Without
+    it the segmenter would emit two plateaus with a zero-length transition,
+    which the UI draws as a vertical step.
+    """
     n = len(lengths)
     if n < 4:
         return np.full(n, _FLAT_LABEL, dtype=object)
@@ -64,6 +96,15 @@ def _label_flat_or_transition(
 
     # Convert to run-length and prune short runs to remove noisy flips
     labels = np.where(is_flat, _FLAT_LABEL, _TRANS_LABEL)
+    labels = _promote_monotonic_runs(
+        labels,
+        lengths,
+        thickness,
+        dt,
+        min_slope=float(monotonic_min_slope),
+        min_mm=float(monotonic_min_mm),
+        min_delta_mm=float(monotonic_min_delta_mm),
+    )
 
     def _prune(labels: np.ndarray, target_label: str, min_mm: float) -> np.ndarray:
         out = labels.copy()
@@ -85,6 +126,48 @@ def _label_flat_or_transition(
     labels = _prune(labels, _TRANS_LABEL, min_trans_mm)
     labels = _prune(labels, _FLAT_LABEL, min_flat_mm)
     return labels
+
+
+def _promote_monotonic_runs(
+    labels: np.ndarray,
+    lengths: np.ndarray,
+    thickness: np.ndarray,
+    slopes: np.ndarray,
+    *,
+    min_slope: float,
+    min_mm: float,
+    min_delta_mm: float,
+) -> np.ndarray:
+    """Mark long one-direction stretches as transition even if the slope is small."""
+    out = labels.copy()
+    n = len(labels)
+    if n < 4:
+        return out
+    index = 0
+    while index < n - 1:
+        direction = 0
+        if abs(slopes[index]) >= min_slope:
+            direction = 1 if slopes[index] > 0 else -1
+        if direction == 0:
+            index += 1
+            continue
+        cursor = index + 1
+        while cursor < n - 1:
+            step_direction = 0
+            if abs(slopes[cursor]) >= min_slope:
+                step_direction = 1 if slopes[cursor] > 0 else -1
+            if step_direction != direction:
+                break
+            cursor += 1
+        last = min(cursor, n - 1)
+        span = float(lengths[last] - lengths[index])
+        delta = abs(float(thickness[last]) - float(thickness[index]))
+        if span >= min_mm and delta >= min_delta_mm:
+            out[index:last] = _TRANS_LABEL
+            index = last
+        else:
+            index += 1
+    return out
 
 
 def _runs_from_labels(labels: np.ndarray) -> List[Dict[str, int]]:
@@ -393,11 +476,16 @@ def _split_plateau_outliers(
     grid_lengths: np.ndarray,
     grid_thickness: np.ndarray,
 ) -> List[Dict[str, Any]]:
-    """Pull 1.46-type ripples back into a 1.4 plateau.
+    """Pull 1.46-type ripples back into a 1.4 plateau, and keep ramps as ramps.
 
-    A sample within 0.1 mm of the plateau's 1-decimal thickness stays on
-    that plateau. A run farther than 0.1 mm becomes its own plateau only
-    when it is at least 20 mm long. Shorter spikes are absorbed.
+    A sample within 0.1 mm of the plateau's 1-decimal thickness stays on that
+    plateau. A longer stretch farther than 0.1 mm is:
+
+    * a new plateau when it is tight (std <= 0.02 mm) and at least 20 mm long;
+    * a transition when it keeps changing (std > 0.02 mm) — a gradual ramp such
+      as 1.24 -> 0.94 keeps its real span instead of being cut into two
+      plateaus joined by a zero-length transition (the vertical step in the UI);
+    * absorbed back into the plateau when it is a short tight spike.
     """
     split_runs: List[Dict[str, Any]] = []
     for run in runs:
@@ -422,10 +510,19 @@ def _split_plateau_outliers(
                 piece_length = float(grid_lengths[start + nxt] - grid_lengths[piece_start])
             else:
                 piece_length = float(run["length_mm"]) - sum(item["length_mm"] for item in pieces)
-            if is_deviant and piece_length < _MIN_OUTLIER_PLATEAU_MM:
-                is_deviant = False
+            piece_std = float(np.std(grid_thickness[piece_start: piece_end + 1]))
+            if is_deviant and piece_std > _PLATEAU_MAX_STD_MM and piece_length >= _TRANSITION_MIN_MM:
+                # 离群段自身还在一直变化（std 大）⇒ 它是斜坡，不是平台。
+                # 保留它的真实跨度当作过渡段，不再切成「平台 + 0 mm 过渡」。
+                label, kind = _TRANS_LABEL, "ramp"
+            elif is_deviant:
+                # 偏离原平台、但自身平稳：新平台（短 spike 稍后会并回）
+                label, kind = _FLAT_LABEL, "plateau"
+            else:
+                label, kind = _FLAT_LABEL, "base"
             pieces.append({
-                "deviant": is_deviant,
+                "label": label,
+                "kind": kind,
                 "start": piece_start,
                 "end": piece_end,
                 "length_mm": piece_length,
@@ -433,35 +530,60 @@ def _split_plateau_outliers(
             cursor = nxt
         merged: List[Dict[str, Any]] = []
         for piece in pieces:
-            if merged and merged[-1]["deviant"] == piece["deviant"]:
+            if merged and merged[-1]["kind"] == piece["kind"]:
                 merged[-1]["end"] = piece["end"]
                 merged[-1]["length_mm"] += piece["length_mm"]
             else:
                 merged.append(dict(piece))
-        if len(merged) == 1 and not merged[0]["deviant"]:
+        if len(merged) == 1 and merged[0]["kind"] == "base":
             split_runs.append(run)
             continue
-        for index, piece in enumerate(merged):
-            if index > 0:
-                boundary = int(merged[index - 1]["end"])
-                split_runs.append({
+        emitted: List[Dict[str, Any]] = []
+        for piece in merged:
+            stats = _segment_stats(grid_lengths, grid_thickness, piece["start"], piece["end"])
+            if (
+                emitted
+                and emitted[-1]["label"] == _FLAT_LABEL
+                and piece["label"] == _FLAT_LABEL
+            ):
+                # 两个不同壁厚的平台直接相接：插一条零长度过渡占位，
+                # 保持 flat/transition 交替（下游按位置映射 TL/TLM），
+                # 真正的斜坡段已经在上面被标成 transition 并带真实跨度。
+                boundary = int(emitted[-1]["end"])
+                emitted.append({
                     "label": _TRANS_LABEL,
                     "start": boundary,
                     "end": boundary,
-                    "length_mm": 0.0,
-                    "mean_thickness": plateau,
-                    "median_thickness": plateau,
-                    "std_thickness": 0.0,
-                    "min_thickness": plateau,
-                    "max_thickness": plateau,
+                    "stats": {
+                        "length_mm": 0.0,
+                        "mean_thickness": float(np.mean(grid_thickness[boundary: boundary + 1])),
+                        "median_thickness": float(np.median(grid_thickness[boundary: boundary + 1])),
+                        "std_thickness": 0.0,
+                        "min_thickness": float(np.min(grid_thickness[boundary: boundary + 1])),
+                        "max_thickness": float(np.max(grid_thickness[boundary: boundary + 1])),
+                    },
                 })
-            stats = _segment_stats(grid_lengths, grid_thickness, piece["start"], piece["end"])
-            stats["length_mm"] = float(piece["length_mm"])
+            emitted.append({
+                "label": piece["label"],
+                "start": int(piece["start"]),
+                "end": int(piece["end"]),
+                "stats": stats,
+            })
+        # 长度按「下一段起点 − 本段起点」重算，保证各段首尾相接
+        for index, item in enumerate(emitted):
+            if index + 1 < len(emitted):
+                item["stats"]["length_mm"] = float(
+                    grid_lengths[emitted[index + 1]["start"]] - grid_lengths[item["start"]]
+                )
+            else:
+                item["stats"]["length_mm"] = float(run["length_mm"]) - sum(
+                    float(other["stats"]["length_mm"]) for other in emitted[:index]
+                )
             split_runs.append({
-                "label": _FLAT_LABEL,
-                "start": piece["start"],
-                "end": piece["end"],
-                **stats,
+                "label": item["label"],
+                "start": item["start"],
+                "end": item["end"],
+                **item["stats"],
             })
     return split_runs
 
@@ -520,7 +642,9 @@ def _segment_uploaded_wall(sections_full: List[Dict[str, Any]]):
     grid_lengths, grid_thickness = grid
     smoothed = _smooth(grid_thickness, window=11, poly=2)
     baseline = np.abs(np.gradient(smoothed, grid_lengths))
-    slope_threshold = max(float(np.percentile(baseline, 35)) * 2.5, 0.005)
+    # 噪声基线取 35 分位（平台占多数），乘 1.2 得到「明显比噪声陡」的门槛；
+    # 下限 0.0015 mm/mm 保证 1.4 → 0.94 这类缓坡能进 transition（原来下限 0.005）。
+    slope_threshold = max(float(np.percentile(baseline, 35)) * 1.2, _MIN_SLOPE_THRESHOLD)
     labels = _label_flat_or_transition(grid_lengths, smoothed, slope_threshold, 20.0, 5.0)
     raw_runs = _runs_from_labels(labels)
     enriched: List[Dict[str, Any]] = []

@@ -14,7 +14,7 @@ from core.common.licensing.activation_code import ActivationCodeError
 from core.common.network_config import get_public_info, save_network_config
 from core.common.local_addresses import build_access_urls
 from core.common.workrole_access import normalize_workrole
-from config import DEVICE_COOKIE_NAME, DEVICE_COOKIE_MAX_AGE, COOKIE_SECURE, LICENSE_DAT_PATH, BIND_SERVER_MACHINE
+from config import DEVICE_COOKIE_NAME, DEVICE_COOKIE_MAX_AGE, COOKIE_SECURE, LICENSE_DAT_PATH, BIND_SERVER_MACHINE, SINGLE_SESSION
 
 auth_bp = Blueprint('auth', __name__)
 user_db = UserDB()
@@ -161,11 +161,17 @@ def _revoke_user_sessions(user_id: int):
 
 
 def _register_session(user_id: int) -> str:
-    """单会话：新登录踢掉该用户旧会话。"""
-    _revoke_user_sessions(user_id)
+    """登录时发放会话令牌。
+
+    默认允许多标签页/多窗口同时在线：每个登录各自持有一个令牌，互不踢下线
+    （实践中「单会话」会让两个标签页互相把对方踢回登录页，表现为页面反复刷新）。
+    需要旧的「新登录踢掉旧会话」行为时设置 GTAPP_SINGLE_SESSION=1。
+    """
+    if SINGLE_SESSION:
+        _revoke_user_sessions(user_id)
     token = secrets.token_urlsafe(32)
     _auth_sessions[token] = {'id': user_id}
-    _user_active_session[user_id] = token
+    _user_active_session.setdefault(user_id, token)
     return token
 
 
@@ -314,7 +320,7 @@ def resolve_current_user():
     session = _auth_sessions.get(token)
     if not session:
         return None
-    if _user_active_session.get(session['id']) != token:
+    if SINGLE_SESSION and _user_active_session.get(session['id']) != token:
         return None
     success, user = user_db.get_user(session['id'])
     if not success:
