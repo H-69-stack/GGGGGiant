@@ -1,0 +1,32 @@
+# -*- coding: utf-8 -*-
+# PipeSolid Bridge launcher macro.
+# Run this once inside an already-open FreeCAD to connect it to the web app.
+import os
+import sys
+
+import FreeCAD
+
+try:
+    _here = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    _here = os.path.join(FreeCAD.getUserAppDataDir(), "Macro")
+_candidates = [_here]
+try:
+    _candidates.append(os.path.join(FreeCAD.getUserAppDataDir(), "Mod"))
+except Exception:
+    pass
+_candidates.append(os.path.join(os.environ.get("APPDATA", ""), "FreeCAD", "Mod"))
+_candidates.append(os.path.join(os.environ.get("APPDATA", ""), "FreeCAD", "v1-1", "Mod"))
+
+_addon_parent = None
+for base in _candidates:
+    if os.path.isdir(os.path.join(base, "PipeSolidBridge")):
+        _addon_parent = os.path.dirname(base) if os.path.basename(base) == "PipeSolidBridge" else base
+        break
+if _addon_parent is None:
+    _addon_parent = os.path.dirname(_here)
+sys.path.insert(0, _addon_parent)
+
+from PipeSolidBridge import bridge
+
+print(bridge.start_server())

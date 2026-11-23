@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+  :root{
+    --bg:#f6f8fb; --card:#ffffff; --line:#dfe5ee; --text:#1a202c; --muted:#64748b;
+    --blue:#2b6cb0; --orange:#c05621; --red:#c53030; --grid:#eef2f7;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font-family:"Microsoft YaHei","Segoe UI",system-ui,sans-serif;font-size:13px}
+  header{padding:14px 20px 10px;display:flex;flex-wrap:wrap;gap:10px 24px;align-items:baseline}
+  header h1{font-size:17px;margin:0;font-weight:600}
+  header .tag{font-size:12px;color:var(--muted)}
+  header .badge{font-size:12px;padding:2px 8px;border-radius:10px;background:#e8f0fb;color:#2b6cb0}
+  main{padding:0 20px 20px;display:grid;gap:14px;
+       grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);
+       grid-template-areas:"three chart" "section readout";}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px 12px;
+        display:flex;flex-direction:column;min-width:0}
+  .card h2{font-size:12.5px;margin:0 0 8px;font-weight:600;color:#334155;display:flex;
+           justify-content:space-between;align-items:center;gap:8px}
+  .card h2 span{font-weight:400;color:var(--muted);font-size:11.5px}
+  #card3d{grid-area:three} #cardChart{grid-area:chart}
+  #cardSec{grid-area:section} #cardRead{grid-area:readout}
+  canvas{width:100%;display:block;touch-action:none}
+  #c3d{height:430px;cursor:grab} #c3d.drag{cursor:grabbing}
+  #cch{height:220px;cursor:crosshair}
+  #csec{height:250px}
+  .slider{display:flex;align-items:center;gap:10px;margin-top:6px;color:var(--muted);font-size:12px}
+  input[type=range]{flex:1;accent-color:var(--blue)}
+  dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0;font-size:12.5px}
+  dt{color:var(--muted)} dd{margin:0;font-variant-numeric:tabular-nums;font-weight:600}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px}
+  .note{margin-top:10px;font-size:11.5px;color:var(--muted);line-height:1.55}
+  @media (max-width:1000px){
+    main{grid-template-columns:minmax(0,1fr);
+         grid-template-areas:"three" "chart" "section" "readout"}
+    #c3d{height:340px}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>__CASE__ · 中心线与形线（外径）</h1>
+  <span class="tag">数据源：STP 原生截面，沿中心线每 1 mm 一个站位</span>
+  <span class="badge">__SUMMARY__</span>
+</header>
+
+<main>
+  <section class="card" id="card3d">
+    <h2>3D 管件外轮廓 <span>拖动旋转 · 滚轮缩放</span></h2>
+    <canvas id="c3d"></canvas>
+    <div class="slider">
+      <span>站位</span>
+      <input type="range" id="slider" min="0" max="__N__" step="1" value="0">
+      <span id="sliderLabel">s = 0 mm</span>
+    </div>
+  </section>
+
+  <section class="card" id="cardChart">
+    <h2>形线（外径）沿中心线 <span>鼠标移动选择站位</span></h2>
+    <canvas id="cch"></canvas>
+    <div class="note">
+      <span class="dot" style="background:#c05621"></span>外径 D = 周长 / π
+      &nbsp;&nbsp;<span class="dot" style="background:#334155"></span>实测站位
+      &nbsp;&nbsp;<span class="dot" style="background:#2f855a"></span>端部线性外推
+      <span id="reviewLegend" hidden>&nbsp;&nbsp;<span class="dot" style="background:#c53030"></span>需人工复核</span>
+    </div>
+  </section>
+
+  <section class="card" id="cardSec">
+    <h2>截面外轮廓 <span id="secTitle">s = 0 mm</span></h2>
+    <canvas id="csec"></canvas>
+  </section>
+
+  <section class="card" id="cardRead">
+    <h2>该站位读数</h2>
+    <dl id="readout"></dl>
+    <div class="note">
+      截面坐标：世界坐标 = 中心 (x,y,z) + u·basis_u + v·basis_v；
+      壁厚为外轮廓 192 点采样到内轮廓的最短距离统计。
+    </div>
+  </section>
+</main>
+
+<script>
+const D = __DATA__;
+
+const state = { idx: 0, yaw: -0.55, pitch: 0.35, zoom: 1 };
+
+const $ = (id) => document.getElementById(id);
+const fmt = (v, n = 2) => (v === null || v === undefined || Number.isNaN(v)) ? "—" : v.toFixed(n);
+
+/* ---------- 画布与设备像素比 ---------- */
+function setupCanvas(canvas) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const w = Math.max(1, Math.round(rect.width));
+  const h = Math.max(1, Math.round(rect.height));
+  // 只在尺寸变化时重建后备缓冲，避免每帧重新分配造成卡顿
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return { ctx, w, h };
+}
+
+/* ---------- 3D ---------- */
+function mainAxis() {
+  let best = 0, bestSpan = -1;
+  for (let a = 0; a < 3; a++) {
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < D.ns; i++) {
+      const base = i * D.p * 3;
+      for (let k = 0; k < D.p; k++) {
+        const v = D.rings[base + k * 3 + a];
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+    }
+    if (hi - lo > bestSpan) { bestSpan = hi - lo; best = a; }
+  }
+  return { axis: best, span: bestSpan };
+}
+const AX = mainAxis();
+
+function rot(p) {
+  // 主轴 -> 屏幕 X，其余两轴按用偏航/俯仰旋转
+  const a = AX.axis;
+  let x = p[a], y = p[(a + 1) % 3], z = p[(a + 2) % 3];
+  const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+  let x1 = x * cy - z * sy, z1 = x * sy + z * cy;
+  const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+  let y1 = y * cp - z1 * sp, z2 = y * sp + z1 * cp;
+  return [x1, y1, z2];
+}
+
+function projectAll(points) {
+  // 先旋转，再按当前视角等比缩放并居中
+  const pts = new Array(points.length);
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (let i = 0; i < points.length; i++) {
+    const r = rot(points[i]);
+    pts[i] = r;
+    if (r[0] < minX) minX = r[0];
+    if (r[0] > maxX) maxX = r[0];
+    if (r[1] < minY) minY = r[1];
+    if (r[1] > maxY) maxY = r[1];
+  }
+  return { pts, minX, maxX, minY, maxY };
+}
+
+function draw3d() {
+  const { ctx, w, h } = setupCanvas($("c3d"));
+  ctx.clearRect(0, 0, w, h);
+
+  const ringPts = [];
+  for (let i = 0; i < D.ns; i++) ringPts.push(D.rings.slice(i * D.p * 3, (i + 1) * D.p * 3));
+  const center = [];
+  for (let i = 0; i < D.n; i++) center.push([D.pos[i * 3], D.pos[i * 3 + 1], D.pos[i * 3 + 2]]);
+
+  const all = [];
+  for (const ring of ringPts) for (let k = 0; k < D.p; k++) all.push([ring[k * 3], ring[k * 3 + 1], ring[k * 3 + 2]]);
+  const { pts, minX, maxX, minY, maxY } = projectAll(all);
+  const cents = projectAll(center).pts;
+
+  const pad = 26;
+  const scale = state.zoom * Math.min((w - pad * 2) / Math.max(maxX - minX, 1e-6),
+                                      (h - pad * 2) / Math.max(maxY - minY, 1e-6));
+  const ox = w / 2 - ((minX + maxX) / 2) * scale;
+  const oy = h / 2 - ((minY + maxY) / 2) * scale;
+  const toScreen = (r) => [ox + r[0] * scale, oy - r[1] * scale];
+
+  // 按深度排序：远的先画
+  const order = ringPts.map((ring, i) => {
+    let depth = 0;
+    for (let k = 0; k < D.p; k++) depth += pts[i * D.p + k][2];
+    return { i, depth: depth / D.p };
+  }).sort((A, B) => A.depth - B.depth);
+
+  ctx.lineJoin = "round";
+  for (const item of order) {
+    const ring = ringPts[item.i];
+    ctx.beginPath();
+    for (let k = 0; k < D.p; k++) {
+      const p = toScreen(pts[item.i * D.p + k]);
+      if (k === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
+    }
+    ctx.closePath();
+    ctx.strokeStyle = "rgba(43,108,176,0.50)";
+    ctx.lineWidth = 0.75;
+    ctx.stroke();
+  }
+
+  // 中心线
+  ctx.beginPath();
+  cents.forEach((r, i) => {
+    const p = toScreen(r);
+    if (i === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
+  });
+  ctx.strokeStyle = "rgba(192,86,33,0.95)";
+  ctx.setLineDash([6, 4]);
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // 当前站位高亮环
+  const ring = currentRing();
+  ctx.beginPath();
+  ring.forEach((p, k) => {
+    const s = toScreen(p);
+    if (k === 0) ctx.moveTo(s[0], s[1]); else ctx.lineTo(s[0], s[1]);
+  });
+  ctx.closePath();
+  ctx.strokeStyle = "#1a365d";
+  ctx.lineWidth = 2.4;
+  ctx.stroke();
+  ctx.fillStyle = "rgba(43,108,176,0.16)";
+  ctx.fill();
+
+  const c = toScreen(cents[state.idx]);
+  ctx.beginPath();
+  ctx.arc(c[0], c[1], 3.2, 0, Math.PI * 2);
+  ctx.fillStyle = "#c05621";
+  ctx.fill();
+}
+
+function currentRing() {
+  const base = state.idx * D.p * 2;
+  const px = D.pos[state.idx * 3], py = D.pos[state.idx * 3 + 1], pz = D.pos[state.idx * 3 + 2];
+  const b = state.idx * 9;
+  const ux = D.bas[b], uy = D.bas[b + 1], uz = D.bas[b + 2];
+  const vx = D.bas[b + 3], vy = D.bas[b + 4], vz = D.bas[b + 5];
+  const out = [];
+  for (let k = 0; k < D.p; k++) {
+    const u = D.sect[base + k * 2], v = D.sect[base + k * 2 + 1];
+    out.push([px + u * ux + v * vx, py + u * uy + v * vy, pz + u * uz + v * vz]);
+  }
+  return out;
+}
+
+/* ---------- 形线曲线 ---------- */
+let chartGeom = null;
+function drawChart() {
+  const { ctx, w, h } = setupCanvas($("cch"));
+  ctx.clearRect(0, 0, w, h);
+  const padL = 52, padR = 14, padT = 10, padB = 28;
+  const iw = w - padL - padR, ih = h - padT - padB;
+
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < D.n; i++) { if (D.d[i] < lo) lo = D.d[i]; if (D.d[i] > hi) hi = D.d[i]; }
+  const padY = Math.max((hi - lo) * 0.12, 0.6);
+  lo -= padY; hi += padY;
+  const L = D.length || 1;
+
+  const X = (s) => padL + (s / L) * iw;
+  const Y = (v) => padT + ih - ((v - lo) / (hi - lo)) * ih;
+  chartGeom = { X, Y, padL, padR, padT, padB, iw, ih, lo, hi, L };
+
+  // 端部外推底色
+  let start = null;
+  for (let i = 0; i <= D.n; i++) {
+    const ext = i < D.n && D.st[i] === 1;
+    if (ext && start === null) start = i;
+    if (!ext && start !== null) {
+      const s0 = D.s[Math.max(0, start - 1)], s1 = D.s[Math.min(D.n - 1, i)];
+      ctx.fillStyle = "rgba(47,133,90,0.10)";
+      ctx.fillRect(X(s0), padT, Math.max(X(s1) - X(s0), 1), ih);
+      start = null;
+    }
+  }
+
+  // 网格
+  ctx.strokeStyle = "#eef2f7"; ctx.lineWidth = 1;
+  const ticks = 5;
+  ctx.fillStyle = "#64748b"; ctx.font = "11px 'Microsoft YaHei',sans-serif";
+  ctx.textAlign = "right"; ctx.textBaseline = "middle";
+  for (let t = 0; t <= ticks; t++) {
+    const v = lo + (hi - lo) * t / ticks, y = Y(v);
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + iw, y); ctx.stroke();
+    ctx.fillText(v.toFixed(2), padL - 8, y);
+  }
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  for (let t = 0; t <= 4; t++) {
+    const s = L * t / 4, x = X(s);
+    ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + ih); ctx.stroke();
+    ctx.fillText(s.toFixed(0), x, padT + ih + 6);
+  }
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#94a3b8";
+  ctx.fillText("外径 D (mm)", padL, padT + 2);
+  ctx.textAlign = "right";
+  ctx.fillText("中心线长度 (mm)", padL + iw, padT + ih + 6);
+
+  // 曲线
+  ctx.beginPath();
+  for (let i = 0; i < D.n; i++) {
+    const x = X(D.s[i]), y = Y(D.d[i]);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.strokeStyle = "#c05621"; ctx.lineWidth = 1.7; ctx.stroke();
+
+  // 需复核站位
+  if (D.reviewCount > 0) {
+    ctx.fillStyle = "rgba(197,48,48,0.85)";
+    for (let i = 0; i < D.n; i++) {
+      if (D.st[i] !== 2) continue;
+      ctx.beginPath(); ctx.arc(X(D.s[i]), Y(D.d[i]), 1.8, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  // 光标
+  const x = X(D.s[state.idx]), y = Y(D.d[state.idx]);
+  ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + ih);
+  ctx.strokeStyle = "rgba(26,54,93,0.55)"; ctx.lineWidth = 1; ctx.stroke();
+  ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2);
+  ctx.fillStyle = "#1a365d"; ctx.fill();
+  ctx.fillStyle = "#1a365d"; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+  const label = D.d[state.idx].toFixed(2) + " mm";
+  const lx = Math.min(x + 8, padL + iw - 60);
+  ctx.fillText(label, lx, y - 6);
+}
+
+/* ---------- 截面 ---------- */
+function drawSection() {
+  const { ctx, w, h } = setupCanvas($("csec"));
+  ctx.clearRect(0, 0, w, h);
+  const pad = 26;
+  const base = state.idx * D.p * 2;
+  const pts = [];
+  let lo = Infinity, hi = -Infinity;
+  for (let k = 0; k < D.p; k++) {
+    const u = D.sect[base + k * 2], v = D.sect[base + k * 2 + 1];
+    pts.push([u, v]);
+    lo = Math.min(lo, u, v); hi = Math.max(hi, u, v);
+  }
+  const span = Math.max(hi - lo, 1e-6);
+  const scale = Math.min(w - pad * 2, h - pad * 2) / span;
+  const cx = w / 2, cy = h / 2;
+  const mid = (lo + hi) / 2;
+  const toScreen = (u, v) => [cx + (u - mid) * scale, cy - (v - mid) * scale];
+
+  // 外接框（完整轴长）
+  const xl = D.xl[state.idx], yl = D.yl[state.idx];
+  if (xl && yl) {
+    const [x0, y0] = toScreen(mid - xl / 2, mid + yl / 2);
+    ctx.strokeStyle = "#cbd5e0"; ctx.setLineDash([4, 3]); ctx.lineWidth = 1;
+    ctx.strokeRect(x0, y0, xl * scale, yl * scale);
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#94a3b8"; ctx.font = "11px 'Microsoft YaHei',sans-serif";
+    ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+    ctx.fillText(`轴长 ${xl.toFixed(2)} × ${yl.toFixed(2)} mm`, x0, y0 - 4);
+  }
+
+  // 中心
+  ctx.strokeStyle = "#cbd5e0"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(cx - 8, cy); ctx.lineTo(cx + 8, cy);
+  ctx.moveTo(cx, cy - 8); ctx.lineTo(cx, cy + 8); ctx.stroke();
+
+  // 轮廓
+  ctx.beginPath();
+  pts.forEach(([u, v], k) => {
+    const p = toScreen(u, v);
+    if (k === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
+  });
+  ctx.closePath();
+  ctx.fillStyle = "rgba(43,108,176,0.10)"; ctx.fill();
+  ctx.strokeStyle = "#2b6cb0"; ctx.lineWidth = 2; ctx.stroke();
+
+  // 采样点
+  ctx.fillStyle = "rgba(43,108,176,0.65)";
+  pts.forEach(([u, v]) => {
+    const p = toScreen(u, v);
+    ctx.beginPath(); ctx.arc(p[0], p[1], 1.2, 0, Math.PI * 2); ctx.fill();
+  });
+}
+
+/* ---------- 读数 ---------- */
+function drawReadout() {
+  const i = state.idx;
+  const statusMap = { 0: ["实测", "#2f855a"], 1: ["端部线性外推", "#2f855a"], 2: ["需人工复核", "#c53030"] };
+  const [label, color] = statusMap[D.st[i]] || statusMap[0];
+  const rows = [
+    ["站位序号", `${i} / ${D.n - 1}`],
+    ["中心线长度 s", `${fmt(D.s[i], 3)} mm`],
+    ["外径周长 C", `${fmt(D.c[i], 3)} mm`],
+    ["外径 D = C/π", `${fmt(D.d[i], 3)} mm`],
+    ["壁厚 最小 / 中位 / 最大", `${fmt(D.wmin[i], 2)} / ${fmt(D.wmed[i], 2)} / ${fmt(D.wmax[i], 2)} mm`],
+    ["轴长 x / y", `${fmt(D.xl[i], 3)} / ${fmt(D.yl[i], 3)} mm`],
+    ["截面中心 x, y, z", `${fmt(D.pos[i * 3], 2)}, ${fmt(D.pos[i * 3 + 1], 2)}, ${fmt(D.pos[i * 3 + 2], 2)}`],
+    ["测量状态", `<span style="color:${color}">${label}</span>`],
+  ];
+  $("readout").innerHTML = rows
+    .map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`)
+    .join("");
+  $("secTitle").textContent = `s = ${fmt(D.s[i], 2)} mm`;
+  $("sliderLabel").textContent = `s = ${fmt(D.s[i], 2)} mm`;
+  $("slider").value = i;
+}
+
+/* ---------- 交互 ---------- */
+function render() { draw3d(); drawChart(); drawSection(); drawReadout(); }
+
+function setIdx(i, fromSlider) {
+  state.idx = Math.max(0, Math.min(D.n - 1, Math.round(i)));
+  render();
+}
+
+(function bind() {
+  const c3d = $("c3d");
+  let dragging = false, lastX = 0, lastY = 0;
+  c3d.addEventListener("pointerdown", (e) => {
+    dragging = true; lastX = e.clientX; lastY = e.clientY;
+    c3d.classList.add("drag"); c3d.setPointerCapture(e.pointerId);
+  });
+  c3d.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    state.yaw += (e.clientX - lastX) * 0.008;
+    state.pitch = Math.max(-1.35, Math.min(1.35, state.pitch + (e.clientY - lastY) * 0.008));
+    lastX = e.clientX; lastY = e.clientY;
+    draw3d();
+  });
+  c3d.addEventListener("pointerup", (e) => {
+    dragging = false; c3d.classList.remove("drag");
+    try { c3d.releasePointerCapture(e.pointerId); } catch (_) {}
+  });
+  c3d.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    state.zoom = Math.max(0.5, Math.min(4, state.zoom * (e.deltaY > 0 ? 0.92 : 1.08)));
+    draw3d();
+  }, { passive: false });
+  c3d.addEventListener("dblclick", () => { state.yaw = -0.55; state.pitch = 0.35; state.zoom = 1; draw3d(); });
+
+  const cch = $("cch");
+  function pick(e) {
+    const rect = cch.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const g = chartGeom;
+    if (!g) return;
+    const s = ((px - g.padL) / g.iw) * g.L;
+    const i = Math.max(0, Math.min(D.n - 1, Math.round(s)));
+    state.idx = i; render();
+  }
+  cch.addEventListener("pointerdown", pick);
+  cch.addEventListener("pointermove", (e) => { if (e.buttons === 0) pick(e); });
+  cch.addEventListener("pointermove", (e) => { if (e.buttons === 1) pick(e); });
+
+  $("slider").addEventListener("input", (e) => setIdx(Number(e.target.value), true));
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft") { setIdx(state.idx - 1); e.preventDefault(); }
+    if (e.key === "ArrowRight") { setIdx(state.idx + 1); e.preventDefault(); }
+  });
+  window.addEventListener("resize", () => render());
+  // 键盘移动的精度：Shift 加速
+})();
+
+if (D.reviewCount > 0) $("reviewLegend").hidden = false;
+state.idx = Math.round(D.n * 0.5);
+render();
+</script>
+</body>
+</html>

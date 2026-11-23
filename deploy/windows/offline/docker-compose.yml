@@ -1,0 +1,32 @@
+# 离线部署用 compose：只使用已加载的镜像，不在客户机构建。
+# 由 deploy/make_windows_package.sh 打进完整离线包，随包一起拷到 Windows。
+services:
+  backend:
+    image: giant-tube-app-backend:latest
+    restart: unless-stopped
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-giant-tube-app-secret-2026}
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: localhost,127.0.0.1,frontend,backend
+      GTAPP_LICENSE_PATH: /app/license/license.dat
+      GTAPP_BIND_SERVER_MACHINE: ${GTAPP_BIND_SERVER_MACHINE:-1}
+      GTAPP_HOST_FINGERPRINT: ${GTAPP_HOST_FINGERPRINT:-}
+      GTAPP_ALLOWED_CIDRS: ${GTAPP_ALLOWED_CIDRS:-127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7}
+      GTAPP_IP_ALLOWLIST: ${GTAPP_IP_ALLOWLIST:-1}
+    volumes:
+      # 运行数据与数据库：持久化到宿主机，随包附带初始数据
+      - ./backend/data:/app/backend/data
+      - ./backend/database:/app/backend/database
+      # 许可证目录：把 license.dat 放到宿主机 ./license/ 下
+      - ./license:/app/license
+    expose:
+      - "5060"
+
+  frontend:
+    image: giant-tube-app-frontend:latest
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${APP_PORT:-5890}:80"

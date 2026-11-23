@@ -1,0 +1,30 @@
+{
+  "name": "giant-tube-app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.0",
+    "axios": "^1.7.0",
+    "chart.js": "^4.5.1",
+    "echarts": "^5.5.0",
+    "element-plus": "^2.7.0",
+    "pinia": "^2.1.0",
+    "plotly.js-dist-min": "^2.35.0",
+    "three": "^0.165.0",
+    "vue": "^3.4.0",
+    "vue-echarts": "^6.7.0",
+    "vue-router": "^4.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.0",
+    "unplugin-auto-import": "^0.17.0",
+    "unplugin-vue-components": "^0.27.0",
+    "vite": "^5.3.0"
+  }
+}

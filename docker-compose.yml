@@ -1,0 +1,45 @@
+services:
+  backend:
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+      args:
+        # 通过 docker compose 构建时，默认即为 release 发布通道（门禁恒开）。
+        # 打包脚本会注入真实版本号与 git commit。
+        APP_VERSION: ${APP_VERSION:-0.0.0}
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        BUILD_CHANNEL: ${BUILD_CHANNEL:-release}
+    image: giant-tube-app-backend:latest
+    restart: unless-stopped
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-giant-tube-app-secret-2026}
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: localhost,127.0.0.1,frontend,backend
+      # 许可证文件路径（指向挂载进来的 license 目录）
+      GTAPP_LICENSE_PATH: /app/license/license.dat
+      # 托管部署不校验服务器机器码（.env 中设 GTAPP_BIND_SERVER_MACHINE=0）；客户离线包 compose 默认 1
+      GTAPP_BIND_SERVER_MACHINE: ${GTAPP_BIND_SERVER_MACHINE:-0}
+      GTAPP_HOST_FINGERPRINT: ${GTAPP_HOST_FINGERPRINT:-}
+      GTAPP_ALLOWED_CIDRS: ${GTAPP_ALLOWED_CIDRS:-127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7}
+      GTAPP_IP_ALLOWLIST: ${GTAPP_IP_ALLOWLIST:-1}
+    volumes:
+      - ./backend/data:/app/backend/data
+      - ./backend/database:/app/backend/database
+      # 许可证目录：把供应商签发的 license.dat 放到宿主机 ./license/ 下
+      - ./license:/app/license
+    expose:
+      - "5060"
+
+  frontend:
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    image: giant-tube-app-frontend:latest
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${APP_PORT:-5890}:80"

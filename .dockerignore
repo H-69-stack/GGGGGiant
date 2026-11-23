@@ -1,0 +1,15 @@
+.git
+.run
+**/__pycache__
+**/*.pyc
+**/.DS_Store
+frontend/node_modules
+frontend/dist
+# 运行时数据不进镜像（由宿主机目录 bind-mount 提供，见 docker-compose.yml）。
+# 这样镜像保持精简、构建上下文更小更快，离线包用单独的数据目录挂载。
+backend/data
+backend/database
+# 离线镜像导出产物，避免被打进构建上下文
+deploy/images
+dist
+license/machine_anchor.json

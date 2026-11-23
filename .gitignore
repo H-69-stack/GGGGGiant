@@ -1,0 +1,131 @@
+# ─── Python ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+*.egg-info/
+.eggs/
+build/
+develop-eggs/
+dist-python/
+
+# ─── Virtual environments ────────────────────────────────
+.venv/
+.venv-stp-validation/
+venv/
+env/
+.env
+.env.local
+.env.*.local
+
+# ─── Frontend / Node ─────────────────────────────────────
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ─── Backend runtime data (not source) ───────────────────
+backend/database/
+backend/data/
+backend/uploads/
+backend/cache/
+backend/exports/
+backend/logs/
+backend/**/uploads/
+backend/**/cache/
+*.db
+*.sqlite
+*.sqlite3
+
+# ─── IDE / editor / OS ───────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ─── Local runtime logs ───────────────────────────────────
+.run/
+
+# ─── 许可证 / 密钥（绝密，严禁入库）─────────────────────────
+# 发证私钥与公钥
+tools/license_authority/keys/
+*.pem
+# 已签发的许可证
+tools/license_authority/issued/
+# 根目录下已签发的许可证（内部测试件，不入库）
+/issued/
+# 客户现场的许可证文件与机器码
+license/license.dat
+**/license.dat
+# PyInstaller / 打包产物
+dist/
+build/license_tool/
+
+# 离线 Docker 镜像（由 deploy/export_images.sh 生成，体积大，随安装包分发而非入库）
+deploy/images/*.tar
+deploy/images/*.tar.gz
+deploy/images/MANIFEST.txt
+
+# 站点授权证书（可在任意机器解锁，等同主密钥，严禁入库）
+deploy/windows/offline/site_license.dat
+
+# ─── Misc runtime / temp ──────────────────────────────────
+# 进程 PID 文件（应用运行期生成）
+*.pid
+giant_tube.pid
+# 标准 DXF 文件的临时备份
+*.bak
+# 临时查询/导出文件
+/query
+/reports/stp_validation_20260921/ui_runtime/
+/reports/stp_validation_20260921/experiments/
+/reports/mold_validation_20260921/ui_runtime/
+/reports/mold_validation_20260921/*.step
+/reports/mold_validation_20260921/*.stl
+/reports/merge_validation_20260921/measured/
+/reports/merge_validation_20260921/runtime/
+/reports/merge_validation_20260921/test_runtime/
+/reports/merge_validation_20260921/models/
+/reports/merge_validation_20260921/tests_first.txt
+/reports/merge_validation_20260921/tests.txt
+/reports/merge_validation_20260921/premerge_untracked/
+/reports/merge_validation_20260921/reread_final/
+/reports/endpoint_validation_20260922/measured/
+/reports/endpoint_validation_20260922/runtime/
+/reports/endpoint_validation_20260922/models/
+/reports/belling_validation_20260923/runtime/
+/reports/belling_validation_20260923/models/
+/frontend/.belling-validation/
+
+# ─── 一体化流水线：产物（可重建，单体 800 MB+，严禁入库）────────
+entity_out/
+**/entity_out/
+_scratch/
+**/_scratch/
+
+# ─── 临时目录 / 运行日志 ─────────────────────────────────
+.tmp/
+logs/
+*.log
+backend/data/rfm_*/
+backend/data/rfm_sessions/
+
+# machine anchor (per-machine runtime state, never package it)
+license/machine_anchor.json
+**/machine_anchor.json

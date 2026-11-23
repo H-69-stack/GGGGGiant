@@ -1,0 +1,49 @@
+# ⚠️ 依赖版本已按开发机 conda 环境 (giant) 精确锁定，请勿随意升级。
+# 几何计算链路（截面切片 / 内外壁区分 / 壁厚）对以下库的版本极其敏感：
+#   trimesh 的 section().discrete 行为、numpy 1.x vs 2.x、scipy ConvexHull
+#   在不同版本间会变化，曾导致 Windows 上内外壁分不出、壁厚算错。
+# 如需升级，必须在开发机和目标机上用同一模型回归验证壁厚结果一致后再改。
+
+# ── 几何计算核心（壁厚/内外壁，最敏感，务必锁死）──
+numpy==1.26.4
+scipy==1.14.1
+trimesh==4.6.3
+shapely==2.0.7
+networkx==3.5
+manifold3d==3.5.0
+
+# ── Web 框架 ──
+flask==3.1.3
+werkzeug==3.1.8
+jinja2==3.1.2
+itsdangerous==2.2.0
+click==8.1.7
+blinker==1.9.0
+flask-cors==6.0.2
+flask-socketio==5.6.1
+python-socketio==5.16.2
+python-engineio==4.13.2
+simple-websocket==1.1.0
+wsproto==1.3.2
+bidict==0.23.1
+
+# ── 数据 / IO / 其它 ──
+pandas==2.3.1
+openpyxl==3.1.2
+scikit-learn==1.7.0
+cryptography==44.0.0
+tqdm==4.66.5
+plotly==6.0.0
+
+# ── STEP(.stp/.step) 解析：CadQuery + OCP 绑定（自带 OpenCASCADE 二进制）──
+# 代码 import OCP 来自 cadquery-ocp；stp_engine 还 import cadquery。
+# cadquery 与 nlopt 不在这里装：cadquery 2.5.2 声明 nlopt>=2.9，而 linux 上
+# nlopt>=2.9 的轮子按 numpy2 ABI 编译，会强制 numpy>=2，破坏几何计算所需的
+# numpy 1.26.4。故 cadquery 的可解析依赖列在此处，cadquery 本体与 nlopt 由
+# Dockerfile 用 --no-deps 单独安装（见 docker/backend.Dockerfile）。
+cadquery-ocp==7.7.2
+casadi==3.7.2
+ezdxf==1.3.5
+multimethod==1.12
+path==17.1.1
+typish==1.9.3

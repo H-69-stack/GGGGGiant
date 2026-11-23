@@ -1,0 +1,9 @@
+# 私钥与已签发许可证绝不入库
+keys/
+*.pem
+issued/
+*.dat
+__pycache__/
+build/
+dist/
+*.spec
